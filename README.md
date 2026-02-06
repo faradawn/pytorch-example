@@ -1,6 +1,6 @@
 # PyTorch Optimization Examples
 
-This repository demonstrates progressive optimization techniques for transformer models, from baseline to state-of-the-art implementations.
+This repository demonstrates progressive optimization techniques for transformer models, from baseline to state-of-the-art implementations. It has been tested on Blackwell GPUs.
 
 ## Code Structure
 
@@ -51,7 +51,7 @@ Run each optimization step individually:
 python benchmark.pys
 ```
 
-Example result
+Example result on Blackwell GB10 Chip.
 ```
 ======================================================================
 Model                                  ms/step    Speedup
