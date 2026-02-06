@@ -5,6 +5,10 @@ This optimization enables Tensor Cores by:
 - Using TF32 precision for FP32 weights (NVIDIA Ampere+)
 - Using Automatic Mixed Precision (AMP) with FP16
 - GEMMs now use Tensor Cores via cuBLAS/cuBLASLt
+
+IMPORTANT: This version should run WITH Tensor Cores.
+To enable Tensor Cores, set: torch.set_float32_matmul_precision('high')
+This uses TF32 precision which triggers Tensor Core usage on Ampere+ GPUs.
 """
 
 import torch

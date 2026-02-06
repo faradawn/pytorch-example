@@ -48,11 +48,18 @@ docker run --gpus all -it --rm -v $(pwd):/workspace -w /workspace nvcr.io/nvidia
 
 Run each optimization step individually:
 ```bash
-python 0_baseline.py
-python 1_cublas.py
-python 2_sdpa.py
-python 3_compile.py
-python 4_transformer_engine.py
+python benchmark.pys
 ```
 
-Each script includes benchmarking code to measure performance improvements.
+Example result
+```
+======================================================================
+Model                                  ms/step    Speedup
+======================================================================
+Baseline (FP32)                           6.54   baseline
+CuBLAS TF32                               3.38      1.93x
+CuBLAS FP16                               2.11      3.10x
+SDPA (FP16)                               2.83      2.31x
+Compiled (FP16)                           1.89      3.47x
+======================================================================
+```

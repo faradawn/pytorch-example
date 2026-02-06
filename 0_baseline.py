@@ -3,6 +3,10 @@
 
 This demonstrates the naive manual attention implementation.
 It creates many intermediate tensors in global memory, which is slow.
+
+IMPORTANT: This baseline should run WITHOUT Tensor Cores.
+To disable Tensor Cores, set: torch.set_float32_matmul_precision('highest')
+This uses full FP32 precision and standard CUDA cores (not Tensor Cores).
 """
 
 import torch

@@ -94,18 +94,14 @@ def benchmark_model(
     torch.cuda.synchronize()
     
     elapsed = start.elapsed_time(end)
-    
     avg_time = elapsed / steps
-    print(f"{name:40s}: {elapsed:7.2f} ms for {steps} steps ({avg_time:6.2f} ms/step)")
     return avg_time
 
 
 def run_benchmarks():
     """Run benchmarks for all transformer block implementations"""
     device = torch.device('cuda')
-    print(f"Running benchmarks on device: {device}")
-    print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
-    print("=" * 80)
+    print(f"CUDA Device: {torch.cuda.get_device_name(0)}\n")
     
     # Common model parameters
     batch_size = 8
@@ -115,110 +111,92 @@ def run_benchmarks():
     mlp_dim = 3072
     steps = 10
     
-    # Enable TF32 for NVIDIA Ampere+ (affects FP32 operations)
-    torch.set_float32_matmul_precision('high')
-    
     results: Dict[str, float] = {}
     
-    # 0. Baseline (FP32)
-    print("\n0. Baseline (FP32, Manual Attention)")
-    print("-" * 80)
+    # 0. Baseline (FP32, NO Tensor Cores)
     try:
+        torch.set_float32_matmul_precision('highest')
         model = BaselineTransformerBlock(dim, num_heads, mlp_dim).to(device)
         x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
         results['Baseline (FP32)'] = benchmark_model(model, x, steps, "Baseline (FP32)")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in Baseline: {e}")
     
     # 1. CuBLAS TF32 (FP32 weights, Tensor Core math)
-    print("\n1. CuBLAS TF32 (FP32 weights, Tensor Cores)")
-    print("-" * 80)
     try:
+        torch.set_float32_matmul_precision('high')
         model = CublasTransformerBlock(dim, num_heads, mlp_dim).to(device)
         x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
         results['CuBLAS TF32'] = benchmark_model(model, x, steps, "CuBLAS TF32")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in CuBLAS TF32: {e}")
     
     # 1b. CuBLAS FP16 (AMP, Tensor Cores)
-    print("\n1b. CuBLAS FP16 (AMP, Tensor Cores)")
-    print("-" * 80)
     try:
+        torch.set_float32_matmul_precision('high')
         model = CublasTransformerBlock(dim, num_heads, mlp_dim).to(device)
         x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
         autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
         results['CuBLAS FP16'] = benchmark_model(model, x, steps, "CuBLAS FP16", autocast_ctx)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in CuBLAS FP16: {e}")
     
     # 2. SDPA (Fused Kernels + FP16)
-    print("\n2. SDPA (Fused Kernels + FP16)")
-    print("-" * 80)
     try:
         model = SDPATransformerBlock(dim, num_heads, mlp_dim, is_causal=False).to(device)
         x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
         autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
         results['SDPA (FP16)'] = benchmark_model(model, x, steps, "SDPA (FP16)", autocast_ctx)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in SDPA: {e}")
     
     # 3. Compiled (SDPA + Graph Fusion + FP16)
-    print("\n3. Compiled (SDPA + Graph Fusion + FP16)")
-    print("-" * 80)
     try:
         model = CompiledTransformerBlock(dim, num_heads, mlp_dim, is_causal=False).to(device)
-        # Compile the model
-        print("Compiling model (this may take a moment)...")
         model = torch.compile(model, mode="max-autotune")
         x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
         autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
         results['Compiled (FP16)'] = benchmark_model(model, x, steps, "Compiled (FP16)", autocast_ctx, warmup_steps=5)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in Compiled: {e}")
     
     # 4. Transformer Engine (FP8)
-    print("\n4. Transformer Engine (FP8)")
-    print("-" * 80)
     if TE_AVAILABLE and TransformerEngineBlock is not None:
         try:
-                import transformer_engine.pytorch as te
-                from transformer_engine.common import recipe
-                
-                model = TransformerEngineBlock(dim, num_heads, mlp_dim).to(device)
-                x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-                
-                # Create FP8 recipe
-                fp8_recipe = recipe.DelayedScaling(
-                    fp8_format=recipe.Format.E4M3,
-                    margin=0,
-                    interval=1,
-                    fp8_amax_history_len=1024,
-                    fp8_amax_compute_algo="most_recent",
-                )
-                
-                autocast_ctx = te.autocast(enabled=True, recipe=fp8_recipe)
-                results['Transformer Engine (FP8)'] = benchmark_model(
-                    model, x, steps, "Transformer Engine (FP8)", autocast_ctx
-                )
+            import transformer_engine.pytorch as te
+            from transformer_engine.common import recipe
+            
+            model = TransformerEngineBlock(dim, num_heads, mlp_dim).to(device)
+            x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
+            
+            fp8_recipe = recipe.DelayedScaling(
+                fp8_format=recipe.Format.E4M3,
+                margin=0,
+                interval=1,
+                fp8_amax_history_len=1024,
+                fp8_amax_compute_algo="most_recent",
+            )
+            
+            autocast_ctx = te.autocast(enabled=True, recipe=fp8_recipe)
+            results['Transformer Engine (FP8)'] = benchmark_model(
+                model, x, steps, "Transformer Engine (FP8)", autocast_ctx
+            )
         except Exception as e:
-            print(f"Error: {e}")
-    else:
-        print("Skipping: Transformer Engine not available")
-        print("Install with: pip install transformer-engine[pytorch]")
+            print(f"Error in Transformer Engine: {e}")
     
-    # Print summary
-    print("\n" + "=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
+    # Print summary table
     if results:
         baseline_time = results.get('Baseline (FP32)', None)
+        print("\n" + "=" * 70)
+        print(f"{'Model':<35} {'ms/step':>10} {'Speedup':>10}")
+        print("=" * 70)
         for name, time in results.items():
-            if baseline_time:
+            if baseline_time and name != 'Baseline (FP32)':
                 speedup = baseline_time / time
-                print(f"{name:40s}: {time:6.2f} ms/step ({speedup:5.2f}x speedup vs baseline)")
+                print(f"{name:<35} {time:>10.2f} {speedup:>9.2f}x")
             else:
-                print(f"{name:40s}: {time:6.2f} ms/step")
-    print("=" * 80)
+                print(f"{name:<35} {time:>10.2f} {'baseline':>10}")
+        print("=" * 70)
 
 
 if __name__ == "__main__":
