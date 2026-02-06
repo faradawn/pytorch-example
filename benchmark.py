@@ -33,12 +33,12 @@ CublasTransformerBlock = import_from_file('1_cublas.py', 'CublasTransformerBlock
 SDPATransformerBlock = import_from_file('2_sdpa.py', 'SDPATransformerBlock')
 CompiledTransformerBlock = import_from_file('3_compile.py', 'CompiledTransformerBlock')
 
-# Transformer Engine (optional)
-te_spec = importlib.util.spec_from_file_location("te", '4_transformer_engine.py')
-te_module = importlib.util.module_from_spec(te_spec)
-te_spec.loader.exec_module(te_module)
-TE_AVAILABLE = getattr(te_module, 'TE_AVAILABLE', False)
-TransformerEngineBlock = getattr(te_module, 'TransformerEngineBlock', None) if TE_AVAILABLE else None
+# Transformer Engine (may fail if not installed)
+try:
+    TransformerEngineBlock = import_from_file('4_transformer_engine.py', 'TransformerEngineBlock')
+except Exception as e:
+    TransformerEngineBlock = None
+    print(f"Warning: Could not import TransformerEngineBlock: {e}")
 
 
 def benchmark_model(
@@ -57,7 +57,7 @@ def benchmark_model(
         x: Input tensor
         steps: Number of benchmark steps
         name: Name of the model for printing
-        autocast_context: Optional autocast context manager
+        autocast_context: Optional autocast context manager or callable that returns one
         warmup_steps: Number of warmup steps
     
     Returns:
@@ -69,9 +69,15 @@ def benchmark_model(
     # Warmup
     with torch.no_grad():
         if autocast_context is not None:
-            with autocast_context:
-                for _ in range(warmup_steps):
-                    _ = model(x)
+            # If it's a callable (like te.autocast), call it to get a fresh context manager
+            if callable(autocast_context):
+                with autocast_context():
+                    for _ in range(warmup_steps):
+                        _ = model(x)
+            else:
+                with autocast_context:
+                    for _ in range(warmup_steps):
+                        _ = model(x)
         else:
             for _ in range(warmup_steps):
                 _ = model(x)
@@ -84,9 +90,15 @@ def benchmark_model(
     start.record()
     with torch.no_grad():
         if autocast_context is not None:
-            with autocast_context:
-                for _ in range(steps):
-                    x = model(x)
+            # If it's a callable (like te.autocast), call it to get a fresh context manager
+            if callable(autocast_context):
+                with autocast_context():
+                    for _ in range(steps):
+                        x = model(x)
+            else:
+                with autocast_context:
+                    for _ in range(steps):
+                        x = model(x)
         else:
             for _ in range(steps):
                 x = model(x)
@@ -109,7 +121,7 @@ def run_benchmarks():
     dim = 768
     num_heads = 12
     mlp_dim = 3072
-    steps = 10
+    steps = 3
     
     results: Dict[str, float] = {}
     
@@ -131,58 +143,39 @@ def run_benchmarks():
     except Exception as e:
         print(f"Error in CuBLAS TF32: {e}")
     
-    # 1b. CuBLAS FP16 (AMP, Tensor Cores)
+    # 2. SDPA (Fused Kernels + FP32)
+    # Note: SDPA may be slower than CuBLAS TF32 on short sequences because:
     try:
         torch.set_float32_matmul_precision('high')
-        model = CublasTransformerBlock(dim, num_heads, mlp_dim).to(device)
-        x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-        autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
-        results['CuBLAS FP16'] = benchmark_model(model, x, steps, "CuBLAS FP16", autocast_ctx)
-    except Exception as e:
-        print(f"Error in CuBLAS FP16: {e}")
-    
-    # 2. SDPA (Fused Kernels + FP16)
-    try:
         model = SDPATransformerBlock(dim, num_heads, mlp_dim, is_causal=False).to(device)
-        x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-        autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
-        results['SDPA (FP16)'] = benchmark_model(model, x, steps, "SDPA (FP16)", autocast_ctx)
+        x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
+        results['SDPA (FP32)'] = benchmark_model(model, x, steps, "SDPA (FP32)")
     except Exception as e:
         print(f"Error in SDPA: {e}")
     
-    # 3. Compiled (SDPA + Graph Fusion + FP16)
+    # 3. Compiled (SDPA + Graph Fusion + FP32)
     try:
+        torch.set_float32_matmul_precision('high')
         model = CompiledTransformerBlock(dim, num_heads, mlp_dim, is_causal=False).to(device)
         model = torch.compile(model, mode="max-autotune")
-        x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-        autocast_ctx = torch.autocast(device_type='cuda', dtype=torch.float16)
-        results['Compiled (FP16)'] = benchmark_model(model, x, steps, "Compiled (FP16)", autocast_ctx, warmup_steps=5)
+        x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
+        results['Compiled (FP32)'] = benchmark_model(model, x, steps, "Compiled (FP32)", warmup_steps=5)
     except Exception as e:
         print(f"Error in Compiled: {e}")
     
     # 4. Transformer Engine (FP8)
-    if TE_AVAILABLE and TransformerEngineBlock is not None:
-        try:
-            import transformer_engine.pytorch as te
-            from transformer_engine.common import recipe
-            
-            model = TransformerEngineBlock(dim, num_heads, mlp_dim).to(device)
-            x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-            
-            fp8_recipe = recipe.DelayedScaling(
-                fp8_format=recipe.Format.E4M3,
-                margin=0,
-                interval=1,
-                fp8_amax_history_len=1024,
-                fp8_amax_compute_algo="most_recent",
-            )
-            
-            autocast_ctx = te.autocast(enabled=True, recipe=fp8_recipe)
-            results['Transformer Engine (FP8)'] = benchmark_model(
-                model, x, steps, "Transformer Engine (FP8)", autocast_ctx
-            )
-        except Exception as e:
-            print(f"Error in Transformer Engine: {e}")
+    import transformer_engine.pytorch as te
+    from transformer_engine.common import recipe
+    
+    model = TransformerEngineBlock(dim, num_heads, mlp_dim).to(device)
+    x = torch.randn(batch_size, seq_len, dim, device=device)
+    
+    fp8_recipe = recipe.DelayedScaling(margin=0, fp8_format=recipe.Format.E4M3)
+    
+    autocast_ctx = lambda: te.autocast(enabled=True, recipe=fp8_recipe)
+    results['Transformer Engine (FP8)'] = benchmark_model(
+        model, x, steps, "Transformer Engine (FP8)", autocast_ctx
+    )   
     
     # Print summary table
     if results:
