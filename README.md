@@ -12,7 +12,7 @@ This repository demonstrates progressive optimization techniques for transformer
 | **1. CuBLAS** | `1_cublas.py` | Arithmetic | Tensor Cores (TF32/FP16) |
 | **2. SDPA** | `2_sdpa.py` | Memory | Kernel Fusion (FlashAttention) |
 | **3. Compile** | `3_compile.py` | Graph | Horizontal/Vertical Fusion (Triton) |
-| **4. Transformer Engine** | `4_transformer_engine.py` | Precision | 8-bit Compute (H100/Hopper) |
+| **4. Transformer Engine** | `4_transformer_engine.py` | Precision | FP8 Transformer Engine |
 
 ### File Descriptions
 
