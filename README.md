@@ -44,17 +44,6 @@ This repository demonstrates progressive optimization techniques for transformer
 docker run --gpus all -it --rm -v $(pwd):/workspace -w /workspace nvcr.io/nvidia/pytorch:25.11-py3
 ```
 
-**Docker flags:**
-- `--gpus all`: Enables GPU access (required for NVIDIA containers)
-- `-it`: Interactive terminal mode
-- `--rm`: Automatically removes container when it exits
-- `-v $(pwd):/workspace`: Mounts current directory to `/workspace` in container
-- `-w /workspace`: Sets working directory to `/workspace`
-
-### Dependencies
-- PyTorch 2.0+ (included in NVIDIA container)
-- Transformer Engine (optional, for step 4): `pip install transformer-engine[pytorch]`
-
 ## Usage
 
 Run each optimization step individually:

@@ -17,9 +17,9 @@ class ManualAttention(nn.Module):
     
     def forward(self, q, k, v):
         d_k = q.size(-1)
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (d_k ** 0.5)
+        scores = (q @ k.transpose(-2, -1)) / (d_k ** 0.5)
         attn = F.softmax(scores, dim=-1)
-        return torch.matmul(attn, v)
+        return attn @ v
 
 
 class LayerNorm(nn.Module):
@@ -84,105 +84,3 @@ class CublasTransformerBlock(nn.Module):
         x = x + residual
         
         return x
-
-
-def run_cublas_fp32():
-    """Run with TF32 enabled (FP32 weights, Tensor Core math)"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running on device: {device}")
-    
-    # Enable TF32 for NVIDIA Ampere+ (Speedup for FP32 weights)
-    torch.set_float32_matmul_precision('high')
-    
-    # Model parameters
-    batch_size = 8
-    seq_len = 512
-    dim = 768
-    num_heads = 12
-    mlp_dim = 3072
-    steps = 10
-    
-    # Create model
-    model = CublasTransformerBlock(dim, num_heads, mlp_dim).to(device)
-    model.eval()
-    
-    # Create input
-    x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
-    
-    # Warmup
-    with torch.no_grad():
-        _ = model(x)
-    
-    # Benchmark
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    
-    start.record()
-    with torch.no_grad():
-        for _ in range(steps):
-            x = model(x)
-    end.record()
-    torch.cuda.synchronize()
-    
-    elapsed = start.elapsed_time(end)
-    print(f"CuBLAS TF32 (FP32 weights, Tensor Cores): {elapsed:.2f} ms for {steps} steps")
-    print(f"Average: {elapsed/steps:.2f} ms per step")
-
-
-def run_cublas_fp16():
-    """Run with Automatic Mixed Precision (FP16)"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running on device: {device}")
-    
-    # Enable TF32 for NVIDIA Ampere+
-    torch.set_float32_matmul_precision('high')
-    
-    # Model parameters
-    batch_size = 8
-    seq_len = 512
-    dim = 768
-    num_heads = 12
-    mlp_dim = 3072
-    steps = 10
-    
-    # Create model
-    model = CublasTransformerBlock(dim, num_heads, mlp_dim).to(device)
-    model.eval()
-    
-    # Create input
-    x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float16)
-    
-    # Warmup
-    with torch.no_grad():
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
-            _ = model(x)
-    
-    # Benchmark with AMP
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    
-    start.record()
-    with torch.no_grad():
-        # Use Automatic Mixed Precision (AMP)
-        # GEMMs now use Tensor Cores via cuBLAS/cuBLASLt
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
-            for _ in range(steps):
-                x = model(x)
-    end.record()
-    torch.cuda.synchronize()
-    
-    elapsed = start.elapsed_time(end)
-    print(f"CuBLAS FP16 (AMP, Tensor Cores): {elapsed:.2f} ms for {steps} steps")
-    print(f"Average: {elapsed/steps:.2f} ms per step")
-
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("CuBLAS Optimization: Tensor Core Acceleration")
-    print("=" * 60)
-    print("\n1. TF32 Mode (FP32 weights, Tensor Core math):")
-    run_cublas_fp32()
-    print("\n2. FP16 Mode (AMP, Tensor Cores):")
-    run_cublas_fp16()

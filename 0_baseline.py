@@ -15,12 +15,9 @@ class ManualAttention(nn.Module):
     
     def forward(self, q, k, v):
         d_k = q.size(-1)
-        # Step 1: Compute attention scores (creates intermediate tensor)
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (d_k ** 0.5)
-        # Step 2: Apply softmax (creates another intermediate tensor)
+        scores = (q @ k.transpose(-2, -1)) / (d_k ** 0.5)
         attn = F.softmax(scores, dim=-1)
-        # Step 3: Apply attention to values (creates final tensor)
-        return torch.matmul(attn, v)
+        return attn @ v
 
 
 class LayerNorm(nn.Module):
@@ -85,48 +82,3 @@ class BaselineTransformerBlock(nn.Module):
         x = x + residual
         
         return x
-
-
-def run_baseline():
-    """Run baseline model (FP32, no optimizations)"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running on device: {device}")
-    
-    # Model parameters
-    batch_size = 8
-    seq_len = 512
-    dim = 768
-    num_heads = 12
-    mlp_dim = 3072
-    steps = 10
-    
-    # Create model
-    model = BaselineTransformerBlock(dim, num_heads, mlp_dim).to(device)
-    model.eval()
-    
-    # Create input
-    x = torch.randn(batch_size, seq_len, dim, device=device, dtype=torch.float32)
-    
-    # Warmup
-    with torch.no_grad():
-        _ = model(x)
-    
-    # Benchmark
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    
-    start.record()
-    with torch.no_grad():
-        for _ in range(steps):
-            x = model(x)
-    end.record()
-    torch.cuda.synchronize()
-    
-    elapsed = start.elapsed_time(end)
-    print(f"Baseline (FP32, Manual Attention): {elapsed:.2f} ms for {steps} steps")
-    print(f"Average: {elapsed/steps:.2f} ms per step")
-
-
-if __name__ == "__main__":
-    run_baseline()
