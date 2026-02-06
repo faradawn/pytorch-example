@@ -56,10 +56,10 @@ Example result
 ======================================================================
 Model                                  ms/step    Speedup
 ======================================================================
-Baseline (FP32)                           6.54   baseline
-CuBLAS TF32                               3.38      1.93x
-CuBLAS FP16                               2.11      3.10x
-SDPA (FP16)                               2.83      2.31x
-Compiled (FP16)                           1.89      3.47x
+Baseline (FP32)                           6.64   baseline
+CuBLAS TF32                               3.31      2.00x
+SDPA (FP32)                               3.72      1.79x
+Compiled (FP32)                           2.96      2.24x
+Transformer Engine (FP8)                  2.30      2.89x
 ======================================================================
 ```
